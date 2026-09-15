@@ -83,7 +83,12 @@ export function toEntityEvidenceRows(evidence: EntityEvidence): EntityEvidenceRo
   });
 }
 
-const PLAY_INTERVAL_MS = 350;
+const BASE_PLAY_INTERVAL_MS = 350;
+
+/** Replay speed multipliers offered on the Run tab; interval = base / speed. */
+export const COA_PLAYBACK_SPEEDS = [0.5, 1, 2, 4] as const;
+
+export type CoaPlaybackSpeed = (typeof COA_PLAYBACK_SPEEDS)[number];
 
 let logCounter = 0;
 let scenarioRef: TScenario | null = null;
@@ -119,6 +124,18 @@ const sessionReady = ref(false);
 const trafficLoading = ref(false);
 const lastSyncedFingerprint = ref<string | null>(null);
 let backgroundLoadPromise: Promise<void> | null = null;
+
+const playbackSpeed = useLocalStorage<CoaPlaybackSpeed>("coaPlaybackSpeed", 1);
+
+const playIntervalMs = computed(() => {
+  const speed = COA_PLAYBACK_SPEEDS.includes(playbackSpeed.value) ? playbackSpeed.value : 1;
+  return Math.round(BASE_PLAY_INTERVAL_MS / speed);
+});
+
+function setPlaybackSpeed(speed: number) {
+  const match = COA_PLAYBACK_SPEEDS.find((value) => value === speed);
+  if (match) playbackSpeed.value = match;
+}
 
 export const coaGenerationActiveTab = useLocalStorage("coaGenerationActiveTab", "0");
 
@@ -342,11 +359,13 @@ async function togglePlay() {
 
 const { pause: pauseInterval, resume: resumeInterval } = useIntervalFn(
   () => {
+    // At faster speeds the tick can outrun a step still waiting on the API.
+    if (loading.value) return;
     void step().then(() => {
       if (snapshot.value.done) pause();
     });
   },
-  PLAY_INTERVAL_MS,
+  playIntervalMs,
   { immediate: false },
 );
 
@@ -410,6 +429,9 @@ export function useCoaGenerationSession() {
     errorMessage,
     sessionReady,
     trafficLoading,
+    playbackSpeed,
+    playIntervalMs,
+    setPlaybackSpeed,
     step,
     reset,
     togglePlay,
