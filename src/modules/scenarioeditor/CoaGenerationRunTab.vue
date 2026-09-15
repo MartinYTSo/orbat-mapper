@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { Button } from "@/components/ui/button";
-import { useCoaGenerationSession } from "@/modules/scenarioeditor/coaGenerationSession";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  COA_PLAYBACK_SPEEDS,
+  useCoaGenerationSession,
+} from "@/modules/scenarioeditor/coaGenerationSession";
 
 const {
   snapshot,
@@ -10,10 +14,17 @@ const {
   loading,
   trafficLoading,
   errorMessage,
+  playbackSpeed,
+  playIntervalMs,
+  setPlaybackSpeed,
   step,
   reset,
   togglePlay,
 } = useCoaGenerationSession();
+
+function chooseSpeed(value: unknown) {
+  if (typeof value === "number") setPlaybackSpeed(value);
+}
 
 function hypothesisBarClass(hypothesis: string) {
   switch (hypothesis) {
@@ -51,6 +62,33 @@ function formatEvidence(value: number) {
         {{ playing ? "Pause" : "Play" }}
       </Button>
     </div>
+
+    <div class="space-y-1">
+      <div class="flex items-baseline justify-between">
+        <span class="text-muted-foreground text-xs">Replay speed</span>
+        <span class="text-muted-foreground font-mono text-xs">{{ playIntervalMs }} ms/step</span>
+      </div>
+      <ToggleGroup
+        type="single"
+        :disable-deselection="true"
+        :model-value="playbackSpeed"
+        variant="outline"
+        class="grid w-full grid-cols-4 gap-1"
+        aria-label="Replay speed"
+        @update:model-value="chooseSpeed"
+      >
+        <ToggleGroupItem
+          v-for="speed in COA_PLAYBACK_SPEEDS"
+          :key="speed"
+          :value="speed"
+          class="w-full px-2 text-xs"
+          :aria-label="`${speed} times speed`"
+        >
+          {{ speed }}×
+        </ToggleGroupItem>
+      </ToggleGroup>
+    </div>
+
     <Button
       type="button"
       size="sm"
