@@ -1,7 +1,13 @@
 import { MS_PER_DAY } from "@/utils/time";
 import { type NScenarioEvent } from "@/types/internalModels";
 
-export type TimelineAction = "zoomIn" | "zoomOut" | "addScenarioEvent";
+export type TimelineAction =
+  | "zoomIn"
+  | "zoomOut"
+  | "addScenarioEvent"
+  | "setCoaTimeframeStart"
+  | "setCoaTimeframeEnd"
+  | "clearCoaTimeframe";
 
 export interface EventWithX {
   x: number;
@@ -11,6 +17,7 @@ export interface EventWithX {
 export interface BinWithX {
   x: number;
   count: number;
+  t: number;
 }
 
 export interface HistogramBin {
@@ -79,6 +86,23 @@ export function roundToNearestQuarterHour(date: Date) {
   return date;
 }
 
+export function timestampToTimelineX(
+  timestamp: number,
+  minTimestamp: number,
+  majorWidth: number,
+  tzOffsetMinutes: number,
+) {
+  const pxPerMs = majorWidth / MS_PER_DAY;
+  const offsetMs = tzOffsetMinutes * 60 * 1000;
+  return (timestamp - minTimestamp + offsetMs) * pxPerMs;
+}
+
+/** Map a timestamp to viewport-local X (same space as the red scenario clock triangle). */
+export function timestampToViewportX(timestamp: number, state: TimelineViewportState) {
+  const diff = timestamp - state.centerTimestamp;
+  return state.viewportWidth / 2 + diff / getMsPerPixel(state.majorWidth);
+}
+
 export function mapEventsToX({
   events,
   minTimestamp,
@@ -110,6 +134,7 @@ export function mapHistogramToX({
     .map((bin) => ({
       x: (bin.t - minTimestamp + offsetMs) * pxPerMs,
       count: bin.count,
+      t: bin.t,
     }));
 }
 

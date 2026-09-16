@@ -10,6 +10,7 @@ import CoaGenerationParametersTab from "@/modules/scenarioeditor/CoaGenerationPa
 import CoaGenerationRunTab from "@/modules/scenarioeditor/CoaGenerationRunTab.vue";
 import CoaGenerationLogTab from "@/modules/scenarioeditor/CoaGenerationLogTab.vue";
 import CoaGenerationSettingsTab from "@/modules/scenarioeditor/CoaGenerationSettingsTab.vue";
+import CoaPlaybackSpeedControls from "@/modules/scenarioeditor/CoaPlaybackSpeedControls.vue";
 import {
   bindCoaGenerationScenario,
   coaGenerationActiveTab,
@@ -55,9 +56,10 @@ onMounted(async () => {
 
 <template>
   <div>
-    <div class="mb-2 flex items-center gap-1.5">
-      <PanelHeading>COA generation</PanelHeading>
-      <Popover v-model:open="helpOpen">
+    <div class="mb-2 flex items-start gap-1.5">
+      <div class="flex items-center gap-1.5">
+        <PanelHeading>COA generation</PanelHeading>
+        <Popover v-model:open="helpOpen">
         <PopoverTrigger as-child>
           <button
             type="button"
@@ -90,6 +92,8 @@ onMounted(async () => {
           </p>
         </PopoverContent>
       </Popover>
+      </div>
+      <CoaPlaybackSpeedControls />
     </div>
     <p class="text-muted-foreground mb-2 text-sm">
       Watchtower MLCOA console — parameters, run controls, and operation log.

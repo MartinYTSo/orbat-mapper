@@ -5,27 +5,28 @@ import dayjs from "dayjs";
 import type { TScenario } from "@/scenariostore";
 import {
   applyCoaFrago,
-  extendCoaSession,
   resetCoaSession,
   stepCoaSession,
-  TRAFFIC_BATCH_SIZE,
   type CoaApiLogEntry,
-  type CoaExtendResponse,
   type CoaResetResponse,
   type EntityEvidence,
 } from "@/modules/scenarioeditor/coaGenerationApi";
 import {
-  collectTrafficReports,
-  type TrafficReportRecord,
-} from "@/modules/scenarioeditor/collectTrafficReports";
-import { syncTrafficToCoaDb } from "@/modules/scenarioeditor/syncTrafficToCoaDb";
-import { trafficRecordsFingerprint } from "@/modules/scenarioeditor/trafficFingerprint";
+  collectPlottedEntities,
+  plottedEntitiesFingerprint,
+} from "@/modules/scenarioeditor/collectPlottedEntities";
+import { syncPlottedEntities } from "@/modules/scenarioeditor/syncPlottedEntities";
 import {
   COA_HYPOTHESIS_NAMES,
   coaGenerationParameters,
   type CoaHypothesisName,
   type CoaHypothesisPriors,
 } from "@/modules/scenarioeditor/coaGenerationParameters";
+import {
+  formatCoaTimeframe,
+  isCoaTimeframeConfigured,
+} from "@/modules/scenarioeditor/coaGenerationTimeframe";
+import { useTimeFormatStore } from "@/stores/timeFormatStore";
 
 export type CoaLogKind = "REPORT" | "MLCOA" | "DISPOSITION" | "FLAG" | "LATENCY" | "INFO";
 
@@ -45,6 +46,8 @@ export interface CoaRunSnapshot {
   entropy: number | null;
   flags: string[];
   done: boolean;
+  /** More observations exist in storage beyond the current batch. */
+  partial: boolean;
   observationCount: number;
   skippedCount: number;
   stepCount: number;
@@ -108,6 +111,7 @@ function defaultSnapshot(): CoaRunSnapshot {
     entropy: null,
     flags: [],
     done: false,
+    partial: false,
     observationCount: 0,
     skippedCount: 0,
     stepCount: 0,
@@ -121,14 +125,24 @@ const playing = ref(false);
 const loading = ref(false);
 const errorMessage = ref<string | null>(null);
 const sessionReady = ref(false);
-const trafficLoading = ref(false);
-const lastSyncedFingerprint = ref<string | null>(null);
-let backgroundLoadPromise: Promise<void> | null = null;
+const entitySyncing = ref(false);
+const plottedEntityCount = ref(0);
+const lastEntityFingerprint = ref<string | null>(null);
+/** Set when a plotted entity landed on an hour the filter already consumed. */
+const requiresReset = ref(false);
+/** Set when applied timeframe changes while a session is already initialized. */
+const timeframeStale = ref(false);
+let stopEntityWatcher: (() => void) | null = null;
+let entitySyncTimer: ReturnType<typeof setTimeout> | undefined;
+
+const ENTITY_SYNC_DEBOUNCE_MS = 600;
 
 const playbackSpeed = useLocalStorage<CoaPlaybackSpeed>("coaPlaybackSpeed", 1);
 
 const playIntervalMs = computed(() => {
-  const speed = COA_PLAYBACK_SPEEDS.includes(playbackSpeed.value) ? playbackSpeed.value : 1;
+  const speed = COA_PLAYBACK_SPEEDS.includes(playbackSpeed.value)
+    ? playbackSpeed.value
+    : 1;
   return Math.round(BASE_PLAY_INTERVAL_MS / speed);
 });
 
@@ -141,6 +155,30 @@ export const coaGenerationActiveTab = useLocalStorage("coaGenerationActiveTab", 
 
 export function bindCoaGenerationScenario(scenario: TScenario) {
   scenarioRef = scenario;
+  stopEntityWatcher?.();
+  stopEntityWatcher = null;
+  if (entitySyncTimer) {
+    clearTimeout(entitySyncTimer);
+    entitySyncTimer = undefined;
+  }
+  lastEntityFingerprint.value = null;
+
+  // Every scenario edit bumps the store revision, so one subscription covers plotting,
+  // moving, re-symbolizing, and deleting without watching each map interaction.
+  const subscription = scenario.store?.onMutation?.(scheduleEntitySync);
+  if (subscription) stopEntityWatcher = () => subscription.off();
+}
+
+function scheduleEntitySync() {
+  if (!scenarioRef) return;
+  // Clock updates during /step and playback are not plot edits. Syncing 300+
+  // entities on every hour blocks the single API worker, so the next /step never starts.
+  if (playing.value || loading.value) return;
+  if (entitySyncTimer) clearTimeout(entitySyncTimer);
+  entitySyncTimer = setTimeout(() => {
+    entitySyncTimer = undefined;
+    void syncPlottedEntitiesNow();
+  }, ENTITY_SYNC_DEBOUNCE_MS);
 }
 
 function appendLog(kind: CoaLogKind, message: string, t?: string) {
@@ -175,15 +213,24 @@ function applyStepResponse(response: Awaited<ReturnType<typeof stepCoaSession>>)
     entropy: response.entropy,
     flags: response.flags,
     done: response.done,
+    partial: response.partial ?? false,
     entityEvidence: response.entity_evidence
       ? { ...response.entity_evidence, stepLabel }
       : snapshot.value.entityEvidence,
   };
+  syncScenarioClock(response.step_time);
   appendApiLog(response.log);
-
-  if (scenarioRef && response.step_time) {
-    scenarioRef.time.setCurrentTime(dayjs(response.step_time).valueOf());
+  if (response.done && response.partial) {
+    appendLog(
+      "INFO",
+      "Current batch finished — click Step again to load the next observation batch.",
+    );
   }
+}
+
+function syncScenarioClock(stepTime: string | null) {
+  if (!scenarioRef || !stepTime) return;
+  scenarioRef.time.setCurrentTime(dayjs(stepTime).valueOf());
 }
 
 function applyResetResponse(response: CoaResetResponse) {
@@ -196,8 +243,10 @@ function applyResetResponse(response: CoaResetResponse) {
     skippedCount: response.skipped_count,
     stepCount: response.step_count,
     done: false,
+    partial: response.partial ?? false,
   };
   sessionReady.value = true;
+  timeframeStale.value = false;
   appendLog(
     "INFO",
     `Loaded ${response.observation_count} traffic reports (${response.skipped_count} skipped). ` +
@@ -205,6 +254,17 @@ function applyResetResponse(response: CoaResetResponse) {
       `${response.step_count} hourly steps.`,
     "INIT",
   );
+  const appliedTimeframe = coaGenerationParameters.value.appliedTimeframe;
+  if (isCoaTimeframeConfigured(appliedTimeframe)) {
+    const tm = useTimeFormatStore();
+    appendLog(
+      "INFO",
+      `Requested COA timeframe: ${formatCoaTimeframe(appliedTimeframe, (ms) =>
+        tm.scenarioFormatter.format(ms),
+      )}.`,
+      "INIT",
+    );
+  }
   if (response.skipped_count > 0) {
     appendLog(
       "INFO",
@@ -212,49 +272,72 @@ function applyResetResponse(response: CoaResetResponse) {
       "INIT",
     );
   }
-}
-
-function applyExtendResponse(response: CoaExtendResponse) {
-  snapshot.value = {
-    ...snapshot.value,
-    observationCount: response.observation_count,
-    stepCount: response.step_count,
-  };
-}
-
-async function loadRemainingTrafficInBackground(allRecords: TrafficReportRecord[]) {
-  if (!scenarioRef) return;
-
-  const remainder = allRecords.slice(TRAFFIC_BATCH_SIZE);
-  if (!remainder.length) {
-    await syncTrafficToCoaDb(scenarioRef.store.state.id, allRecords);
-    lastSyncedFingerprint.value = trafficRecordsFingerprint(allRecords);
-    return;
-  }
-
-  trafficLoading.value = true;
-  try {
-    for (let offset = 0; offset < remainder.length; offset += TRAFFIC_BATCH_SIZE) {
-      const batch = remainder.slice(offset, offset + TRAFFIC_BATCH_SIZE);
-      const response = await extendCoaSession(batch);
-      applyExtendResponse(response);
-      const loaded = Math.min(offset + batch.length, remainder.length);
-      appendLog(
-        "INFO",
-        `Background traffic: loaded ${loaded}/${remainder.length} remaining reports (+${response.extended_steps} hourly steps).`,
-        "INIT",
-      );
-    }
-    await syncTrafficToCoaDb(scenarioRef.store.state.id, allRecords);
-    lastSyncedFingerprint.value = trafficRecordsFingerprint(allRecords);
+  if (response.partial) {
     appendLog(
       "INFO",
-      `All ${allRecords.length} traffic reports are now available for COA generation.`,
+      "Loaded the first observation batch. More load in batches of 30 as you step.",
       "INIT",
     );
+  }
+}
+
+/**
+ * Push every plotted unit and feature to the COA API. When a session is running the
+ * server folds them into the belief update, so a newly plotted entity influences the
+ * next step without discarding belief state.
+ */
+async function syncPlottedEntitiesNow(options: { force?: boolean } = {}) {
+  if (!scenarioRef) return null;
+
+  const entities = collectPlottedEntities(scenarioRef);
+  const fingerprint = plottedEntitiesFingerprint(entities);
+  if (!options.force && fingerprint === lastEntityFingerprint.value) return null;
+
+  entitySyncing.value = true;
+  try {
+    const response = await syncPlottedEntities(scenarioRef.store.state.id, entities, {
+      replaceAll: true,
+    });
+    lastEntityFingerprint.value = fingerprint;
+    plottedEntityCount.value = response.entity_count;
+    if (response.requires_reset) requiresReset.value = true;
+
+    if (response.session_active) {
+      snapshot.value = {
+        ...snapshot.value,
+        observationCount: response.observation_count,
+        stepCount: response.step_count,
+      };
+      const changed =
+        response.added_observations + response.replaced_observations + response.deleted;
+      if (changed > 0) {
+        appendLog(
+          "REPORT",
+          `Plotted entities: ${response.added_observations} added, ` +
+            `${response.replaced_observations} updated, ${response.deleted} removed ` +
+            `(${response.entity_count} on map).`,
+        );
+      }
+      if (response.stale.length) {
+        appendLog(
+          "INFO",
+          `${response.stale.length} plotted entities fall before the current step — reset to fold them in.`,
+        );
+      }
+    }
+    if (response.skipped.length) {
+      appendLog(
+        "INFO",
+        `${response.skipped.length} plotted entities were skipped (off-map or unconvertible).`,
+      );
+    }
+    return response;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+    appendLog("INFO", `Plotted entity sync failed: ${errorMessage.value}`, "ERROR");
+    return null;
   } finally {
-    trafficLoading.value = false;
-    backgroundLoadPromise = null;
+    entitySyncing.value = false;
   }
 }
 
@@ -264,49 +347,61 @@ async function ensureSessionInitialized(force = false) {
   }
   if (sessionReady.value && !force) return;
 
-  const allRecords = collectTrafficReports(scenarioRef);
-  if (!allRecords.length) {
+  const plottedEntities = collectPlottedEntities(scenarioRef);
+  if (!plottedEntities.length) {
     throw new Error(
-      "No traffic reports found. Import traffic reports onto the Traffic Reports layer first.",
+      "No plotted entities found. Import traffic reports or plot a unit or feature on the map.",
     );
   }
 
-  const initialBatch = allRecords.slice(0, TRAFFIC_BATCH_SIZE);
-  const hasMoreTraffic = allRecords.length > initialBatch.length;
+  // Persist before /reset because SQLite observations are the session's only input.
+  const syncResponse = await syncPlottedEntitiesNow({ force: true });
+  if (!syncResponse) {
+    throw new Error(errorMessage.value ?? "Could not persist plotted entities.");
+  }
 
   const response = await resetCoaSession(
     scenarioRef.store.state.id,
     coaGenerationParameters.value.appliedPriors,
-    { records: initialBatch, partial: hasMoreTraffic },
+    coaGenerationParameters.value.appliedTimeframe,
   );
   logEntries.value = [];
   applyResetResponse(response);
+}
 
-  if (hasMoreTraffic) {
-    appendLog(
-      "INFO",
-      `Started with first ${initialBatch.length} of ${allRecords.length} reports — loading the rest in the background.`,
-      "INIT",
-    );
-    backgroundLoadPromise = loadRemainingTrafficInBackground(allRecords);
-    void backgroundLoadPromise;
-  } else {
-    const fingerprint = trafficRecordsFingerprint(allRecords);
-    if (force || fingerprint !== lastSyncedFingerprint.value) {
-      await syncTrafficToCoaDb(scenarioRef.store.state.id, allRecords);
-      lastSyncedFingerprint.value = fingerprint;
-    }
-  }
+async function runStep() {
+  const response = await stepCoaSession();
+  applyStepResponse(response);
+}
+
+function isStaleCoaSession(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /call \/reset before/i.test(message);
+}
+
+function canAdvanceSession() {
+  return !snapshot.value.done || snapshot.value.partial;
 }
 
 async function step() {
-  if (snapshot.value.done) return;
+  if (!canAdvanceSession()) return;
   loading.value = true;
   errorMessage.value = null;
   try {
     await ensureSessionInitialized();
-    const response = await stepCoaSession();
-    applyStepResponse(response);
+    try {
+      await runStep();
+    } catch (error) {
+      if (!isStaleCoaSession(error)) throw error;
+      sessionReady.value = false;
+      await ensureSessionInitialized(true);
+      appendLog(
+        "INFO",
+        "COA engine had no live session — calling /reset and retrying the step.",
+        "INIT",
+      );
+      await runStep();
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
     appendLog("INFO", errorMessage.value, "ERROR");
@@ -321,9 +416,8 @@ async function reset() {
   errorMessage.value = null;
   try {
     sessionReady.value = false;
-    trafficLoading.value = false;
-    backgroundLoadPromise = null;
-    lastSyncedFingerprint.value = null;
+    lastEntityFingerprint.value = null;
+    requiresReset.value = false;
     snapshot.value = defaultSnapshot();
     logEntries.value = [];
     await ensureSessionInitialized(true);
@@ -338,6 +432,7 @@ async function reset() {
 function pause() {
   playing.value = false;
   pauseInterval();
+  syncScenarioClock(snapshot.value.stepTime);
 }
 
 async function togglePlay() {
@@ -345,7 +440,7 @@ async function togglePlay() {
     pause();
     return;
   }
-  if (snapshot.value.done) return;
+  if (!canAdvanceSession()) return;
   playing.value = true;
   try {
     await ensureSessionInitialized();
@@ -362,12 +457,48 @@ const { pause: pauseInterval, resume: resumeInterval } = useIntervalFn(
     // At faster speeds the tick can outrun a step still waiting on the API.
     if (loading.value) return;
     void step().then(() => {
-      if (snapshot.value.done) pause();
+      if (!canAdvanceSession()) pause();
     });
   },
   playIntervalMs,
   { immediate: false },
 );
+
+function setCoaTimeframeBound(bound: "startMs" | "endMs", valueMs: number) {
+  coaGenerationParameters.value = {
+    ...coaGenerationParameters.value,
+    appliedTimeframe: {
+      ...coaGenerationParameters.value.appliedTimeframe,
+      [bound]: valueMs,
+    },
+  };
+
+  if (sessionReady.value) {
+    timeframeStale.value = true;
+    const tm = useTimeFormatStore();
+    appendLog(
+      "INFO",
+      `COA ${bound === "startMs" ? "start" : "end"} set to ${tm.scenarioFormatter.format(valueMs)}. Reset to run within the new window.`,
+      snapshot.value.stepLabel,
+    );
+  }
+}
+
+function clearCoaTimeframe() {
+  coaGenerationParameters.value = {
+    ...coaGenerationParameters.value,
+    appliedTimeframe: { startMs: null, endMs: null },
+  };
+
+  if (sessionReady.value) {
+    timeframeStale.value = true;
+    appendLog(
+      "INFO",
+      "COA window cleared — reset to use all observations.",
+      snapshot.value.stepLabel,
+    );
+  }
+}
 
 async function syncBeliefFromFrago() {
   snapshot.value = {
@@ -428,7 +559,10 @@ export function useCoaGenerationSession() {
     loading,
     errorMessage,
     sessionReady,
-    trafficLoading,
+    entitySyncing,
+    plottedEntityCount,
+    requiresReset,
+    timeframeStale,
     playbackSpeed,
     playIntervalMs,
     setPlaybackSpeed,
@@ -437,6 +571,9 @@ export function useCoaGenerationSession() {
     togglePlay,
     pause,
     appendLog,
+    setCoaTimeframeBound,
+    clearCoaTimeframe,
     syncBeliefFromFrago,
+    syncPlottedEntitiesNow,
   };
 }

@@ -15,6 +15,13 @@ type TrafficReportRecord = Record<string, unknown> & {
   longitude: number;
 };
 
+function sidcFromReport(report: Record<string, unknown>): string {
+  const value = report.sidc;
+  return typeof value === "string" && /^\d{20}$/.test(value)
+    ? value
+    : NEUTRAL_TRAFFIC_REPORT_SIDC;
+}
+
 function requireCoordinate(
   report: Record<string, unknown>,
   key: "latitude" | "longitude",
@@ -93,16 +100,15 @@ export function trafficReportsJsonlToPayload(
     const reportType =
       typeof report.report_type === "string" ? report.report_type : "Traffic report";
     const dtg = typeof report.dtg === "string" ? report.dtg : "";
-    const reportId =
-      typeof report.report_id === "string" ? report.report_id : nanoid();
+    const reportId = typeof report.report_id === "string" ? report.report_id : nanoid();
     const name = dtg ? `${reportType} — ${dtg}` : reportType;
-    const description =
-      typeof report.report_text === "string" ? report.report_text : "";
+    const description = typeof report.report_text === "string" ? report.report_text : "";
     const location: [number, number] = [report.longitude, report.latitude];
+    const sidc = sidcFromReport(report);
     const userData = {
       ...report,
       timestamp_utc: visibleFromT,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
     };
 
     features.push({
@@ -115,7 +121,7 @@ export function trafficReportsJsonlToPayload(
       },
       visibleFromT,
       visibleUntilT,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
       userData,
     });
     units.push({
@@ -123,7 +129,7 @@ export function trafficReportsJsonlToPayload(
       name,
       shortName: typeof report.observer === "string" ? report.observer : undefined,
       description,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
       location,
       visibleFromT,
       visibleUntilT,

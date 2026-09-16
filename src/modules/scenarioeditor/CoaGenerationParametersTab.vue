@@ -34,7 +34,7 @@ async function applyFrago() {
   });
 }
 
-function useBelief() {
+function useOpordPriorBelief() {
   coaGenerationParameters.value.draftPriors = {
     ...coaGenerationParameters.value.appliedPriors,
   };
@@ -70,9 +70,16 @@ function useBelief() {
     </div>
 
     <div class="flex gap-2">
-      <Button type="button" size="sm" class="flex-1" @click="applyFrago">Apply FRAGO</Button>
-      <Button type="button" size="sm" variant="outline" class="flex-1" @click="useBelief">
-        Use belief
+      <Button
+        type="button"
+        size="sm"
+        class="bg-foreground text-background hover:bg-foreground/90 flex-1"
+        @click="useOpordPriorBelief"
+      >
+        Use OPORD prior Belief
+      </Button>
+      <Button type="button" size="sm" variant="outline" class="flex-1" @click="applyFrago">
+        Apply FRAGO
       </Button>
     </div>
   </section>

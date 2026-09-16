@@ -6,8 +6,13 @@ import { defineComponent, nextTick, reactive, ref } from "vue";
 import ScenarioTimeline from "./ScenarioTimeline.vue";
 import { activeScenarioKey } from "@/components/injects";
 
-const { formatterSpy } = vi.hoisted(() => ({
+const { formatterSpy, coaGenerationParametersRef } = vi.hoisted(() => ({
   formatterSpy: vi.fn((value: number) => `fmt:${value}`),
+  coaGenerationParametersRef: {
+    value: {
+      appliedTimeframe: { startMs: null as number | null, endMs: null as number | null },
+    },
+  },
 }));
 
 vi.mock("@vueuse/core", async () => {
@@ -29,6 +34,23 @@ vi.mock("@/stores/timeFormatStore", () => ({
       format: formatterSpy,
     },
   }),
+}));
+
+vi.mock("@/modules/scenarioeditor/coaGenerationSession", () => ({
+  useCoaGenerationSession: () => ({
+    setCoaTimeframeBound: vi.fn(),
+    clearCoaTimeframe: vi.fn(),
+  }),
+}));
+
+vi.mock("@/composables/notifications", () => ({
+  useNotifications: () => ({
+    send: vi.fn(),
+  }),
+}));
+
+vi.mock("@/modules/scenarioeditor/coaGenerationParameters", () => ({
+  coaGenerationParameters: coaGenerationParametersRef,
 }));
 
 const TimelineContextMenuStub = defineComponent({
@@ -97,6 +119,11 @@ function parseWidth(style: string | undefined) {
   return match ? Number(match[1]) : NaN;
 }
 
+function parseLeft(style: string | undefined) {
+  const match = /left:\s*([\d.]+)px/.exec(style || "");
+  return match ? Number(match[1]) : NaN;
+}
+
 function nonEmptyTexts(wrapper: VueWrapper, selector: string) {
   return wrapper
     .findAll(selector)
@@ -126,6 +153,7 @@ function mountTimeline() {
 
 beforeEach(() => {
   formatterSpy.mockClear();
+  coaGenerationParametersRef.value.appliedTimeframe = { startMs: null, endMs: null };
   Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
     configurable: true,
     value: vi.fn(),
@@ -293,6 +321,42 @@ describe("ScenarioTimeline", () => {
     await nextTick();
 
     expect(setCurrentTime).toHaveBeenLastCalledWith(Date.UTC(2024, 0, 1, 10, 0));
+  });
+
+  it("moves COA window markers with the timeline while dragging", async () => {
+    const center = Date.UTC(2024, 0, 1, 10, 0);
+    coaGenerationParametersRef.value.appliedTimeframe = {
+      startMs: center - 2 * 60 * 60 * 1000,
+      endMs: center + 2 * 60 * 60 * 1000,
+    };
+
+    const { wrapper, state } = mountTimeline();
+    state.currentTime = center;
+    await nextTick();
+    await nextTick();
+
+    const host = wrapper.get("[data-testid='scenario-timeline']").element;
+    const startMarker = wrapper.get("[data-testid='coa-timeframe-start-marker']");
+    const initialLeft = parseLeft(startMarker.attributes("style"));
+
+    host.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: 500,
+      }),
+    );
+    host.dispatchEvent(
+      new PointerEvent("pointermove", {
+        bubbles: true,
+        pointerId: 1,
+        clientX: 560,
+      }),
+    );
+    await nextTick();
+
+    const draggedLeft = parseLeft(startMarker.attributes("style"));
+    expect(draggedLeft - initialLeft).toBe(60);
   });
 
   it("does not trigger timeline pointerup rounding when pressing an event marker", async () => {

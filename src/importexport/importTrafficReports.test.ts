@@ -44,6 +44,11 @@ describe("importTrafficReports", () => {
           sidc: "10041000001205000000",
           location: [22.546177, 50.056778],
           visibleFromT: "2014-06-08T00:28:58Z",
+          userData: {
+            timestamp_utc: "2014-06-08T00:28:58Z",
+            report_text: "Report body",
+            report_type: "SPOTREP",
+          },
         },
       ],
       center: [22.546177, 50.056778],
@@ -62,6 +67,11 @@ describe("importTrafficReports", () => {
     expect(store.state.unitMap["unit-1"]?.state?.[0]).toMatchObject({
       t: Date.parse("2014-06-08T00:28:58Z"),
       location: [22.546177, 50.056778],
+    });
+    expect(store.state.unitMap["unit-1"]?.userData).toEqual({
+      timestamp_utc: "2014-06-08T00:28:58Z",
+      report_text: "Report body",
+      report_type: "SPOTREP",
     });
     expect(store.state.currentTime).toBe(Date.parse("2014-06-08T01:00:00Z"));
     expect(store.state.layerItemMap["feature-1"]?.description).toBe("Report body");

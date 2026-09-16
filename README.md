@@ -59,10 +59,9 @@ ORBAT Mapper and the [Watchtower MLCOA demo](https://github.com/Panoptica-Techno
 
 `public/traffic_reports_payload.json`
 
-It contains 100 map features (HUMINT, UAS, CONTACT, and related formats) for
-OPERATION BULLDOG. Each feature stores report text in `description` and structured
-fields (`timestamp_utc`, `report_type`, `equipment`, `mgrs`, and so on) in
-`userData`.
+It contains 3ID AO Reporting only (CJTF-E SIGACT blocks are excluded). Each
+feature stores report text in `description` and structured fields
+(`timestamp_utc`, `report_type`, `equipment`, `mgrs`, and so on) in `userData`.
 
 ### Import into a scenario
 

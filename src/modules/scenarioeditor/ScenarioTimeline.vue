@@ -11,8 +11,10 @@ import { useActiveScenario } from "@/composables/scenarioUtils";
 import { type NScenarioEvent } from "@/types/internalModels";
 import { useTimeFormatStore } from "@/stores/timeFormatStore";
 import TimelineContextMenu from "@/components/TimelineContextMenu.vue";
+import { useOrbatReveal } from "@/composables/useOrbatReveal";
 import { useSelectedItems } from "@/stores/selectedStore";
 import { MS_PER_DAY, MS_PER_HOUR } from "@/utils/time";
+import { findUnitsWithStateAtHour } from "@/modules/scenarioeditor/scenarioEventLinks";
 import {
   buildDayTicksWithStep,
   buildTimelineRenderData,
@@ -22,6 +24,7 @@ import {
   getDayTickStepForZoom,
   getMsPerPixel,
   roundToNearestQuarterHour,
+  timestampToViewportX,
   toLocalX,
   type BinWithX,
   type EventWithX,
@@ -29,6 +32,10 @@ import {
   type TimelineAction,
   type TimelineRenderInputs,
 } from "./scenarioTimelineMath";
+import { coaGenerationParameters } from "@/modules/scenarioeditor/coaGenerationParameters";
+import { isCoaTimeframeValid } from "@/modules/scenarioeditor/coaGenerationTimeframe";
+import { useCoaGenerationSession } from "@/modules/scenarioeditor/coaGenerationSession";
+import { useNotifications } from "@/composables/notifications";
 
 const HOURS_PER_DAY = MS_PER_DAY / MS_PER_HOUR;
 const MAJOR_WIDTH_DEFAULT = 100;
@@ -36,6 +43,7 @@ const MAJOR_WIDTH_SWITCH_THRESHOLD = 55;
 const MAJOR_WIDTH_MIN = 5;
 const ZOOM_STEP = 40;
 
+const activeScenario = useActiveScenario();
 const {
   time: {
     scenarioTime,
@@ -46,7 +54,8 @@ const {
     addScenarioEvent,
   },
   store,
-} = useActiveScenario();
+} = activeScenario;
+const { revealUnitInOrbat } = useOrbatReveal(activeScenario);
 
 function getTzOffset(timestamp: number) {
   return dayjs(timestamp)
@@ -130,8 +139,36 @@ const hoveredX = ref(0);
 const showHoverMarker = ref(false);
 
 const { activeScenarioEventId } = useSelectedItems();
+const { setCoaTimeframeBound, clearCoaTimeframe } = useCoaGenerationSession();
+const { send: notify } = useNotifications();
 
 const countColor = scaleSequential(interpolateOranges).domain([1, maxCount]);
+
+const coaViewportMarkers = computed(() => {
+  if (!width.value) return { startX: null, endX: null, highlight: null };
+
+  const timeframe = coaGenerationParameters.value.appliedTimeframe;
+  const viewport = {
+    centerTimestamp: centerTimeStamp.value,
+    viewportWidth: width.value,
+    majorWidth: majorWidth.value,
+  };
+
+  const toX = (timestamp: number | null) => {
+    if (timestamp == null) return null;
+    // Markers sit outside the translated timeline strip; follow drag/animate offset.
+    return timestampToViewportX(timestamp, viewport) + draggedDiff.value;
+  };
+
+  const startX = toX(timeframe.startMs);
+  const endX = toX(timeframe.endMs);
+  const highlight =
+    startX != null && endX != null && isCoaTimeframeValid(timeframe)
+      ? { left: Math.min(startX, endX), width: Math.abs(endX - startX) }
+      : null;
+
+  return { startX, endX, highlight };
+});
 
 const timelineWidth = computed(() => {
   return majorTicks.value.reduce((total, tick) => total + tick.width, 0);
@@ -374,7 +411,17 @@ watch(
 );
 
 function onEventClick(event: NScenarioEvent) {
+  activeScenarioEventId.value = event.id;
   goToScenarioEvent(event);
+}
+
+function onHistogramBinClick(bin: BinWithX) {
+  animate.value = true;
+  setCurrentTime(bin.t);
+  const unitIds = findUnitsWithStateAtHour(store.state.unitMap, bin.t);
+  if (unitIds.length) {
+    revealUnitInOrbat(unitIds[0]);
+  }
 }
 
 function onContextMenuAction(action: TimelineAction) {
@@ -391,6 +438,21 @@ function onContextMenuAction(action: TimelineAction) {
       startTime: +hovered,
     });
     activeScenarioEventId.value = eventId;
+  } else if (action === "setCoaTimeframeStart" || action === "setCoaTimeframeEnd") {
+    const hovered = hoveredDate.value;
+    if (!hovered) return;
+    const bound = action === "setCoaTimeframeStart" ? "startMs" : "endMs";
+    setCoaTimeframeBound(bound, +hovered);
+    notify({
+      type: "info",
+      message:
+        bound === "startMs"
+          ? "COA window start set on timeline."
+          : "COA window end set on timeline.",
+    });
+  } else if (action === "clearCoaTimeframe") {
+    clearCoaTimeframe();
+    notify({ type: "info", message: "COA window cleared." });
   }
 }
 </script>
@@ -414,13 +476,34 @@ function onContextMenuAction(action: TimelineAction) {
       @contextmenu="onContextMenuOpen($event, onContextMenu)"
     >
       <div
-        class="bg-sidebar flex shrink-0 items-center justify-center overflow-clip"
+        v-if="coaViewportMarkers.highlight"
+        data-testid="coa-timeframe-highlight"
+        class="pointer-events-none absolute inset-y-0 z-[1] bg-sky-500/80"
+        :style="{
+          left: `${coaViewportMarkers.highlight.left}px`,
+          width: `${coaViewportMarkers.highlight.width}px`,
+        }"
+      />
+      <div
+        class="bg-sidebar relative z-10 flex shrink-0 items-center justify-center overflow-visible"
         :style="{ height: scaledRowHeight(14) }"
       >
+        <IconTriangleDown
+          v-if="coaViewportMarkers.startX != null"
+          data-testid="coa-timeframe-start-marker"
+          class="absolute top-0 h-4 w-4 -translate-x-1/2 scale-x-150 transform text-sky-600 dark:text-sky-400"
+          :style="{ left: `${coaViewportMarkers.startX}px` }"
+        />
+        <IconTriangleDown
+          v-if="coaViewportMarkers.endX != null"
+          data-testid="coa-timeframe-end-marker"
+          class="absolute top-0 h-4 w-4 -translate-x-1/2 scale-x-150 transform text-sky-600 dark:text-sky-400"
+          :style="{ left: `${coaViewportMarkers.endX}px` }"
+        />
         <IconTriangleDown class="h-4 w-4 scale-x-150 transform text-red-900" />
       </div>
       <div
-        class="min-h-0 flex-1 touch-none text-sm select-none"
+        class="relative z-10 min-h-0 flex-1 touch-none text-sm select-none"
         :class="animate ? 'transition-all' : 'transition-none'"
         :style="`transform:translate(${totalXOffset}px)`"
       >
@@ -429,19 +512,23 @@ function onContextMenuAction(action: TimelineAction) {
             class="relative flex-none text-center"
             :style="{ width: `${timelineWidth}px`, height: scaledRowHeight(16) }"
           >
-            <div
-              v-for="{ x, count } in binsWithX"
-              :key="x"
-              class="absolute top-1 rounded border border-gray-500"
+            <button
+              v-for="{ x, count, t } in binsWithX"
+              :key="`${x}-${t}`"
+              type="button"
+              class="absolute top-1 cursor-pointer rounded-full border border-gray-500"
               :style="{
                 left: `${x}px`,
                 width: `${Math.max(majorWidth / 24, 8)}px`,
                 height: scaledRowHeight(8),
                 backgroundColor: countColor(count),
               }"
+              @pointerdown.stop
+              @pointerup.stop
               @mousemove.stop
               :title="`${count} unit events`"
-            ></div>
+              @click.stop="onHistogramBinClick({ x, count, t })"
+            />
             <button
               v-for="{ x, event } in eventsWithX"
               type="button"

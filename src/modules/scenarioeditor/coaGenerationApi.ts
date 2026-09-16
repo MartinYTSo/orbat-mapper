@@ -1,9 +1,11 @@
 import type { CoaAssumptionsCatalog } from "@/modules/scenarioeditor/coaGenerationAssumptions";
 import type { CoaHypothesisPriors } from "@/modules/scenarioeditor/coaGenerationParameters";
+import {
+  coaTimeframeToApiPayload,
+  type CoaGenerationTimeframe,
+} from "@/modules/scenarioeditor/coaGenerationTimeframe";
 import type { CoaLogKind } from "@/modules/scenarioeditor/coaGenerationSession";
 import type { TrafficReportRecord } from "@/modules/scenarioeditor/collectTrafficReports";
-
-export const TRAFFIC_BATCH_SIZE = 50;
 
 const DEFAULT_API_BASE = "/api/coa";
 
@@ -23,6 +25,7 @@ export interface EntityEvidence {
 
 export interface CoaStepResponse {
   done: boolean;
+  partial?: boolean;
   step_index: number;
   step_time: string;
   mlcoa: string;
@@ -77,17 +80,25 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface CoaResetRequest {
+  scenario_id: string;
+  priors: CoaHypothesisPriors;
+  /** BACKEND HOOK: ITDX `/reset` should honor these when filtering observations. */
+  window_start?: string;
+  window_end?: string;
+}
+
 export async function resetCoaSession(
   scenarioId: string,
   priors: CoaHypothesisPriors,
-  options?: { records?: TrafficReportRecord[]; partial?: boolean },
+  timeframe?: CoaGenerationTimeframe,
 ): Promise<CoaResetResponse> {
-  return postJson<CoaResetResponse>("/reset", {
+  const body: CoaResetRequest = {
     scenario_id: scenarioId,
     priors,
-    records: options?.records,
-    partial: options?.partial ?? false,
-  });
+    ...coaTimeframeToApiPayload(timeframe ?? { startMs: null, endMs: null }),
+  };
+  return postJson<CoaResetResponse>("/reset", body);
 }
 
 export async function extendCoaSession(

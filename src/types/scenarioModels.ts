@@ -111,6 +111,7 @@ export interface Unit {
   status?: string;
   template?: EntityId;
   properties?: UnitProperties;
+  userData?: Record<string, unknown>;
   locked?: boolean;
   style?: UnitStyle;
   // internal runtime only state

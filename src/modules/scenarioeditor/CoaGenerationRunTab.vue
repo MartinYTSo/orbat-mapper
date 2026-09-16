@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { Button } from "@/components/ui/button";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { coaGenerationParameters } from "@/modules/scenarioeditor/coaGenerationParameters";
 import {
-  COA_PLAYBACK_SPEEDS,
-  useCoaGenerationSession,
-} from "@/modules/scenarioeditor/coaGenerationSession";
+  formatCoaTimeframe,
+  isCoaTimeframeConfigured,
+} from "@/modules/scenarioeditor/coaGenerationTimeframe";
+import { useCoaGenerationSession } from "@/modules/scenarioeditor/coaGenerationSession";
+import { useTimeFormatStore } from "@/stores/timeFormatStore";
+
+const tm = useTimeFormatStore();
 
 const {
   snapshot,
@@ -12,19 +17,20 @@ const {
   entityEvidenceRows,
   playing,
   loading,
-  trafficLoading,
+  entitySyncing,
+  requiresReset,
+  timeframeStale,
   errorMessage,
-  playbackSpeed,
-  playIntervalMs,
-  setPlaybackSpeed,
   step,
   reset,
   togglePlay,
 } = useCoaGenerationSession();
 
-function chooseSpeed(value: unknown) {
-  if (typeof value === "number") setPlaybackSpeed(value);
-}
+const appliedTimeframeText = computed(() => {
+  const timeframe = coaGenerationParameters.value.appliedTimeframe;
+  if (!isCoaTimeframeConfigured(timeframe)) return null;
+  return formatCoaTimeframe(timeframe, (ms) => tm.scenarioFormatter.format(ms));
+});
 
 function hypothesisBarClass(hypothesis: string) {
   switch (hypothesis) {
@@ -49,44 +55,23 @@ function formatEvidence(value: number) {
 <template>
   <section class="space-y-4">
     <div class="grid grid-cols-2 gap-2">
-      <Button type="button" size="sm" :disabled="snapshot.done || loading" @click="step">
+      <Button
+        type="button"
+        size="sm"
+        :disabled="(snapshot.done && !snapshot.partial) || loading"
+        @click="step"
+      >
         Step
       </Button>
       <Button
         type="button"
         size="sm"
         variant="outline"
-        :disabled="snapshot.done || loading"
+        :disabled="(snapshot.done && !snapshot.partial) || loading"
         @click="togglePlay"
       >
         {{ playing ? "Pause" : "Play" }}
       </Button>
-    </div>
-
-    <div class="space-y-1">
-      <div class="flex items-baseline justify-between">
-        <span class="text-muted-foreground text-xs">Replay speed</span>
-        <span class="text-muted-foreground font-mono text-xs">{{ playIntervalMs }} ms/step</span>
-      </div>
-      <ToggleGroup
-        type="single"
-        :disable-deselection="true"
-        :model-value="playbackSpeed"
-        variant="outline"
-        class="grid w-full grid-cols-4 gap-1"
-        aria-label="Replay speed"
-        @update:model-value="chooseSpeed"
-      >
-        <ToggleGroupItem
-          v-for="speed in COA_PLAYBACK_SPEEDS"
-          :key="speed"
-          :value="speed"
-          class="w-full px-2 text-xs"
-          :aria-label="`${speed} times speed`"
-        >
-          {{ speed }}×
-        </ToggleGroupItem>
-      </ToggleGroup>
     </div>
 
     <Button
@@ -100,8 +85,15 @@ function formatEvidence(value: number) {
       Reset
     </Button>
 
-    <p v-if="trafficLoading" class="text-muted-foreground text-xs">
-      Loading remaining traffic in batches of 50…
+    <p v-if="entitySyncing" class="text-muted-foreground text-xs">
+      Syncing plotted entities…
+    </p>
+    <p v-if="requiresReset" class="text-xs text-amber-700 dark:text-amber-400">
+      A plotted entity falls before the current step. Reset to fold it into the belief.
+    </p>
+    <p v-if="timeframeStale" class="text-xs text-amber-700 dark:text-amber-400">
+      Timeframe changed since the last reset. Reset to run COA calculations within the new
+      window.
     </p>
     <p v-if="errorMessage" class="text-destructive text-xs">{{ errorMessage }}</p>
 
@@ -110,11 +102,9 @@ function formatEvidence(value: number) {
         <span class="text-muted-foreground">Status:</span>
         <span class="ml-1 font-medium">{{ snapshot.stepLabel }}</span>
       </div>
-      <div v-if="snapshot.observationCount">
-        <span class="text-muted-foreground">Traffic loaded:</span>
-        <span class="ml-1 font-medium">
-          {{ snapshot.observationCount }} reports · {{ snapshot.stepCount }} hourly steps
-        </span>
+      <div v-if="appliedTimeframeText">
+        <span class="text-muted-foreground">Requested window:</span>
+        <span class="ml-1 font-medium">{{ appliedTimeframeText }}</span>
       </div>
       <div>
         <span class="text-muted-foreground">MLCOA:</span>

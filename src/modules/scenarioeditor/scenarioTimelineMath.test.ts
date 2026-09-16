@@ -42,6 +42,10 @@ describe("scenarioTimelineMath", () => {
     expect(eventsWithX.map((entry) => entry.x)).toEqual([20, 80]);
     expect(binsWithX.map((entry) => entry.x)).toEqual([20, 140]);
     expect(binsWithX.map((entry) => entry.count)).toEqual([2, 5]);
+    expect(binsWithX.map((entry) => entry.t)).toEqual([
+      minTimestamp,
+      minTimestamp + 12 * MS_PER_HOUR,
+    ]);
   });
 
   it("converts local x to timeline date around viewport center", () => {

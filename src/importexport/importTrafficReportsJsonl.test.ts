@@ -51,6 +51,31 @@ describe("trafficReportsJsonlToPayload", () => {
     expect(payload.currentTime).toBe("2026-06-08T00:30:59.000Z");
   });
 
+  it("uses a valid per-report SIDC for the feature and unit", () => {
+    const sidc = "10061000001211020000";
+    const payload = trafficReportsJsonlToPayload(JSON.stringify({ ...report, sidc }), {
+      visibilityMinutes: 0,
+    });
+
+    expect(payload.features[0]).toMatchObject({
+      sidc,
+      userData: { sidc },
+    });
+    expect(payload.units[0]).toMatchObject({
+      sidc,
+      userData: { sidc },
+    });
+  });
+
+  it("falls back to the neutral SIDC when a per-report SIDC is invalid", () => {
+    const payload = trafficReportsJsonlToPayload(
+      JSON.stringify({ ...report, sidc: "invalid" }),
+    );
+
+    expect(payload.features[0].sidc).toBe(NEUTRAL_TRAFFIC_REPORT_SIDC);
+    expect(payload.units[0].sidc).toBe(NEUTRAL_TRAFFIC_REPORT_SIDC);
+  });
+
   it("reports the line number for malformed input", () => {
     expect(() =>
       trafficReportsJsonlToPayload(`${JSON.stringify(report)}\nnot-json`),
@@ -92,6 +117,11 @@ describe("importing a traffic reports payload into a scenario", () => {
         location: [23.15442, 50.147132],
       },
     ]);
+    expect(unit.userData).toMatchObject({
+      timestamp_utc: "2026-06-08T00:30:59.000Z",
+      report_text: "Example report",
+      report_type: "HUMINT",
+    });
     // Without this projection the unit exists in the ORBAT tree but never renders.
     expect(unit._state?.location).toEqual([23.15442, 50.147132]);
   });

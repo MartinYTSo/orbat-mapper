@@ -160,9 +160,13 @@ export function importTrafficReports(
         sidc: unit.sidc,
         subUnits: [],
         textAmplifiers: unit.textAmplifiers,
+        userData: unit.userData,
         state,
       };
-      unitActions.addUnit(unitData, groupId, undefined, { noUndo: true, updateState: true });
+      unitActions.addUnit(unitData, groupId, undefined, {
+        noUndo: true,
+        updateState: true,
+      });
     }
   });
 
