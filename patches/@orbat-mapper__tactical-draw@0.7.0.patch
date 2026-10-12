@@ -1,0 +1,89 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 5bbd729e2e5b5a8dee464e37bdf06e98ff372ac9..552b7c17107357fb04f9bdd9222956a38e9de42c 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -8295,14 +8295,27 @@ const MINE_PATTERN_TILE_SIZE = FILL_PATTERN_DEFINITIONS["mine-unspecified"].tile
+ function isMinePattern(pattern) {
+ 	return pattern.startsWith("mine-");
+ }
++const DEFAULT_FILL_PATTERN_SCALE = 100;
++const MIN_FILL_PATTERN_SCALE = 25;
++const MAX_FILL_PATTERN_SCALE = 400;
++function normalizeFillPatternScale(scale) {
++	if (scale === void 0 || scale === null) return DEFAULT_FILL_PATTERN_SCALE;
++	const value = typeof scale === "number" ? scale : Number(scale);
++	if (!Number.isFinite(value)) return DEFAULT_FILL_PATTERN_SCALE;
++	return Math.min(MAX_FILL_PATTERN_SCALE, Math.max(MIN_FILL_PATTERN_SCALE, Math.round(value)));
++}
++function fillPatternSpacingFactor(scale) {
++	return normalizeFillPatternScale(scale) / DEFAULT_FILL_PATTERN_SCALE;
++}
+ /**
+-* Stable id for a rasterized tile, keyed by pattern and color. Adapters use
++* Stable id for a rasterized tile, keyed by pattern, scale, and color. Adapters use
+ * this as the image-registry key (MapLibre `addImage` id, OpenLayers pattern
+-* cache key) so the same color+pattern never gets rasterized twice. Color is
++* cache key) so the same color+pattern+scale never gets rasterized twice. Color is
+ * lowercased so `"#FF0000"` and `"#ff0000"` share one texture.
+ */
+-function fillPatternImageId(color, pattern) {
+-	return `td-hatch-${pattern}-${color.trim().toLowerCase()}`;
++function fillPatternImageId(color, pattern, patternScale = DEFAULT_FILL_PATTERN_SCALE) {
++	const scale = normalizeFillPatternScale(patternScale);
++	return `td-hatch-${pattern}-${scale}-${color.trim().toLowerCase()}`;
+ }
+ /**
+ * Tile edge length in device pixels for a given `pixelRatio`. Must be a power
+@@ -8488,14 +8501,15 @@ function commandCoverage(x, y, command) {
+ 	for (const [ax, ay, bx, by] of command.segments) coverage = Math.max(coverage, segmentCoverage(x, y, ax, ay, bx, by, command.strokeWidth));
+ 	return coverage;
+ }
+-function preparePatternRaster(pattern, pixelRatio) {
++function preparePatternRaster(pattern, pixelRatio, patternScale = DEFAULT_FILL_PATTERN_SCALE) {
+ 	const size = fillPatternImageDimension(pixelRatio);
+ 	const definition = FILL_PATTERN_DEFINITIONS[pattern];
+ 	const coordinateScale = size / BASE_TILE_SIZE;
++	const spacingScale = fillPatternSpacingFactor(patternScale);
+ 	return {
+ 		commands: rasterCommands(pattern, coordinateScale, isMinePattern(pattern) ? coordinateScale : Math.max(1, Math.round(pixelRatio))),
+-		tileWidth: definition.tile.width * coordinateScale,
+-		tileHeight: definition.tile.height * coordinateScale
++		tileWidth: definition.tile.width * coordinateScale * spacingScale,
++		tileHeight: definition.tile.height * coordinateScale * spacingScale
+ 	};
+ }
+ /**
+@@ -8504,9 +8518,9 @@ function preparePatternRaster(pattern, pixelRatio) {
+ * jsdom/node tests. Every command, tile dimension, stroke, fill, and dash is
+ * read from the public renderer-neutral pattern definition.
+ */
+-function makeFillPatternImage(color, pattern, pixelRatio = 1) {
++function makeFillPatternImage(color, pattern, pixelRatio = 1, patternScale = DEFAULT_FILL_PATTERN_SCALE) {
+ 	const size = fillPatternImageDimension(pixelRatio);
+-	const prepared = preparePatternRaster(pattern, pixelRatio);
++	const prepared = preparePatternRaster(pattern, pixelRatio, patternScale);
+ 	const { r, g, b, a } = parseColor(color);
+ 	const data = new Uint8ClampedArray(size * size * 4);
+ 	for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+diff --git a/dist/map-adapter-BWvKku2P.d.mts b/dist/map-adapter-BWvKku2P.d.mts
+index 9aa5f8f8902eac1bca9a8a7f0192f57a540d3b3c..38ccf30f89f2698d6b90799d808bdd55b0fb807b 100644
+--- a/dist/map-adapter-BWvKku2P.d.mts
++++ b/dist/map-adapter-BWvKku2P.d.mts
+@@ -66,7 +66,7 @@ declare function isMinePattern(pattern: HatchPattern): pattern is MinePattern;
+  * cache key) so the same color+pattern never gets rasterized twice. Color is
+  * lowercased so `"#FF0000"` and `"#ff0000"` share one texture.
+  */
+-declare function fillPatternImageId(color: string, pattern: HatchPattern): string;
++declare function fillPatternImageId(color: string, pattern: HatchPattern, patternScale?: number): string;
+ /**
+  * Tile edge length in device pixels for a given `pixelRatio`. Must be a power
+  * of two — MapLibre requires POT dimensions for seamless WebGL texture wrap —
+@@ -85,7 +85,7 @@ type MinePattern = Extract<HatchPattern, `mine-${string}`>;
+  * jsdom/node tests. Every command, tile dimension, stroke, fill, and dash is
+  * read from the public renderer-neutral pattern definition.
+  */
+-declare function makeFillPatternImage(color: string, pattern: HatchPattern, pixelRatio?: number): {
++declare function makeFillPatternImage(color: string, pattern: HatchPattern, pixelRatio?: number, patternScale?: number): {
+   width: number;
+   height: number;
+   data: Uint8ClampedArray;

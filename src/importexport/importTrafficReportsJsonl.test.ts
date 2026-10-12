@@ -38,12 +38,12 @@ describe("trafficReportsJsonlToPayload", () => {
       visibleFromT: "2026-06-08T00:30:59.000Z",
       userData: {
         timestamp_utc: "2026-06-08T00:30:59.000Z",
-        sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+        sidc: "10011000000000000000",
       },
     });
     expect(unit).toMatchObject({
       id: "traffic-report-unit-report-1",
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc: "10011000000000000000",
       location: [23.15442, 50.147132],
       visibleFromT: "2026-06-08T00:30:59.000Z",
     });

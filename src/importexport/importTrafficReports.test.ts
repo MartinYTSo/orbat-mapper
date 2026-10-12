@@ -51,7 +51,7 @@ describe("importTrafficReports", () => {
       currentTime: "2014-06-08T01:00:00Z",
     };
 
-    const result = importTrafficReports(scenario, payload);
+    const result = importTrafficReports(scenario, payload, { visibilityMinutes: 0 });
 
     expect(result.importedFeatures).toBe(1);
     expect(result.importedUnits).toBe(1);
@@ -65,5 +65,96 @@ describe("importTrafficReports", () => {
     });
     expect(store.state.currentTime).toBe(Date.parse("2014-06-08T01:00:00Z"));
     expect(store.state.layerItemMap["feature-1"]?.description).toBe("Report body");
+  });
+
+  it("retires units and features after the visibility window", () => {
+    const store = useNewScenarioStore(createEmptyScenario({ id: "visibility-scenario" }));
+    const time = useScenarioTime(store);
+    const scenario = {
+      store,
+      unitActions: useUnitManipulations(store),
+      geo: useGeo(store),
+      time,
+    } as unknown as Parameters<typeof importTrafficReports>[0];
+
+    importTrafficReports(
+      scenario,
+      {
+        features: [
+          {
+            id: "feature-1",
+            name: "SPOTREP",
+            description: "Report body",
+            geometry: { type: "Point", coordinates: [22.5, 50.0] },
+            visibleFromT: "2026-06-08T00:00:00Z",
+          },
+        ],
+        units: [
+          {
+            id: "unit-1",
+            name: "SPOTREP",
+            description: "Report body",
+            sidc: "10061000001205000000",
+            location: [22.5, 50.0],
+            visibleFromT: "2026-06-08T00:00:00Z",
+          },
+        ],
+      },
+      { visibilityMinutes: 60 },
+    );
+
+    time.setCurrentTime(Date.parse("2026-06-08T00:30:00Z"));
+    expect(store.state.unitMap["unit-1"]?._state?.location).toEqual([22.5, 50.0]);
+
+    time.setCurrentTime(Date.parse("2026-06-08T01:01:00Z"));
+    expect(store.state.unitMap["unit-1"]?._state?.location).toBeFalsy();
+    expect(store.state.layerItemMap["feature-1"]?._hidden).toBe(true);
+  });
+
+  it("honours visibleUntilT baked into the payload", () => {
+    const store = useNewScenarioStore(createEmptyScenario({ id: "payload-window" }));
+    const time = useScenarioTime(store);
+    const scenario = {
+      store,
+      unitActions: useUnitManipulations(store),
+      geo: useGeo(store),
+      time,
+    } as unknown as Parameters<typeof importTrafficReports>[0];
+
+    importTrafficReports(
+      scenario,
+      {
+        features: [
+          {
+            id: "feature-1",
+            name: "SPOTREP",
+            description: "Report body",
+            geometry: { type: "Point", coordinates: [22.5, 50.0] },
+            visibleFromT: "2026-06-08T00:00:00Z",
+            visibleUntilT: "2026-06-08T01:00:00Z",
+          },
+        ],
+        units: [
+          {
+            id: "unit-1",
+            name: "SPOTREP",
+            description: "Report body",
+            sidc: "10061000001205000000",
+            location: [22.5, 50.0],
+            visibleFromT: "2026-06-08T00:00:00Z",
+            visibleUntilT: "2026-06-08T01:00:00Z",
+          },
+        ],
+      },
+      { visibilityMinutes: 0 },
+    );
+
+    time.setCurrentTime(Date.parse("2026-06-08T00:30:00Z"));
+    expect(store.state.unitMap["unit-1"]?._state?.location).toEqual([22.5, 50.0]);
+    expect(store.state.layerItemMap["feature-1"]?._hidden).toBe(false);
+
+    time.setCurrentTime(Date.parse("2026-06-08T01:00:00Z"));
+    expect(store.state.unitMap["unit-1"]?._state?.location).toBeFalsy();
+    expect(store.state.layerItemMap["feature-1"]?._hidden).toBe(true);
   });
 });

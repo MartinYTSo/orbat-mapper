@@ -5,10 +5,14 @@ import {
   DEFAULT_TRAFFIC_REPORTS_IMPORT_OPTIONS,
   type TrafficReportsImportOptions,
 } from "@/importexport/trafficReportsImportOptions";
+import {
+  NEUTRAL_TRAFFIC_REPORT_SIDC,
+  resolveTrafficReportSidc,
+} from "@/importexport/trafficSymbology";
 
 const MS_PER_MINUTE = 60_000;
 
-export const NEUTRAL_TRAFFIC_REPORT_SIDC = "10041000000000000000";
+export { NEUTRAL_TRAFFIC_REPORT_SIDC } from "@/importexport/trafficSymbology";
 
 type TrafficReportRecord = Record<string, unknown> & {
   latitude: number;
@@ -99,10 +103,11 @@ export function trafficReportsJsonlToPayload(
     const description =
       typeof report.report_text === "string" ? report.report_text : "";
     const location: [number, number] = [report.longitude, report.latitude];
+    const sidc = resolveTrafficReportSidc(report);
     const userData = {
       ...report,
       timestamp_utc: visibleFromT,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
     };
 
     features.push({
@@ -115,7 +120,7 @@ export function trafficReportsJsonlToPayload(
       },
       visibleFromT,
       visibleUntilT,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
       userData,
     });
     units.push({
@@ -123,7 +128,7 @@ export function trafficReportsJsonlToPayload(
       name,
       shortName: typeof report.observer === "string" ? report.observer : undefined,
       description,
-      sidc: NEUTRAL_TRAFFIC_REPORT_SIDC,
+      sidc,
       location,
       visibleFromT,
       visibleUntilT,

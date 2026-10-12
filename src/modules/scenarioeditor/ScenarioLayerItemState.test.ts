@@ -68,4 +68,76 @@ describe("ScenarioLayerItemState", () => {
       .trigger("click");
     expect(clearLayerItemState).toHaveBeenCalledWith("cm-1");
   });
+
+  it("shows a Restrictiveness slider for a polygon control measure", async () => {
+    const updateTacticalGraphic = vi.fn();
+    const item: NTacticalGraphicLayerItem = {
+      id: "cm-polygon",
+      _pid: "layer-1",
+      kind: "tacticalGraphic",
+      graphicKind: "polygon",
+      controlPoints: [
+        [10, 60],
+        [11, 61],
+        [10, 61],
+      ],
+      style: { opacity: 0.5 },
+      state: [],
+    };
+
+    const SliderStub = defineComponent({
+      name: "SliderStub",
+      props: {
+        modelValue: { type: Array, required: true },
+      },
+      emits: ["update:modelValue", "value-commit"],
+      template:
+        "<input data-test='restrictiveness-slider' type='range' :value='modelValue[0]' @input='$emit(\"update:modelValue\", [Number($event.target.value)])' @change='$emit(\"value-commit\")' />",
+    });
+
+    const wrapper = mount(ScenarioLayerItemState, {
+      props: { item, heading: "Control measure state" },
+      global: {
+        plugins: [createPinia()],
+        provide: {
+          [activeScenarioKey as symbol]: {
+            store: { state: { currentTime: 0 } },
+            time: { setCurrentTime: vi.fn() },
+            geo: {
+              deleteLayerItemStateEntry: vi.fn(),
+              clearLayerItemState: vi.fn(),
+              updateTacticalGraphic,
+            },
+          },
+        },
+        stubs: {
+          PanelSubHeading: { template: "<h2><slot /></h2>" },
+          BaseButton: { template: "<button><slot /></button>" },
+          IconButton: true,
+          DotsMenu: true,
+          Slider: SliderStub,
+        },
+      },
+    });
+
+    expect(wrapper.find("[data-test='restrictiveness-item']").text()).toContain(
+      "Restrictiveness",
+    );
+    expect(wrapper.text()).toContain("50%");
+
+    await wrapper.find("[data-test='restrictiveness-slider']").setValue("0.75");
+    expect(updateTacticalGraphic).toHaveBeenCalledWith(
+      "cm-polygon",
+      { style: { opacity: 0.75 } },
+      { undoable: false },
+    );
+
+    await wrapper.setProps({ item: { ...item, style: { opacity: 0.75 } } });
+    await wrapper.find("[data-test='restrictiveness-slider']").trigger("change");
+    expect(updateTacticalGraphic).toHaveBeenLastCalledWith(
+      "cm-polygon",
+      { style: { opacity: 0.75 } },
+      { undoable: true },
+    );
+  });
 });

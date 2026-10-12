@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, toRaw } from "vue";
+import type { ControlMeasureStyle } from "@orbat-mapper/control-measures";
 import { IconCrosshairsGps } from "@iconify-prerendered/vue-mdi";
 
 import BaseButton from "@/components/BaseButton.vue";
 import DotsMenu from "@/components/DotsMenu.vue";
 import IconButton from "@/components/IconButton.vue";
 import PanelSubHeading from "@/components/PanelSubHeading.vue";
+import { Slider } from "@/components/ui/slider";
 import { activeScenarioKey } from "@/components/injects";
 import { useTimeFormatStore } from "@/stores/timeFormatStore";
 import type { MenuItemData } from "@/components/types";
 import type { StateAction } from "@/types/constants";
-import type {
-  NScenarioLayerItem,
-  ScenarioLayerItemState,
+import {
+  isNTacticalGraphicLayerItem,
+  type NScenarioLayerItem,
+  type ScenarioLayerItemState,
 } from "@/types/scenarioLayerItems";
 import { injectStrict } from "@/utils";
 
@@ -28,7 +31,49 @@ const { store, time, geo } = injectStrict(activeScenarioKey);
 const fmt = useTimeFormatStore();
 
 const state = computed<ScenarioLayerItemState[]>(() => props.item.state ?? []);
+const showRestrictivenessItem = computed(
+  () =>
+    isNTacticalGraphicLayerItem(props.item) && props.item.graphicKind === "polygon",
+);
+
+const DEFAULT_POLYGON_OPACITY = 1;
+
+const opacityValue = computed(() => {
+  if (!showRestrictivenessItem.value) return DEFAULT_POLYGON_OPACITY;
+  const item = props.item;
+  return item._state?.style?.opacity ?? item.style?.opacity ?? DEFAULT_POLYGON_OPACITY;
+});
+
+const opacity = computed({
+  get: () => [opacityValue.value],
+  set: ([value]) => {
+    if (value === undefined) return;
+    updateOpacity(value, false);
+  },
+});
+
+const opacityAsPercent = computed(() => (opacityValue.value * 100).toFixed(0));
+
 const menuItems: MenuItemData<StateAction>[] = [{ label: "Delete", action: "delete" }];
+
+function nextStyle(opacity: number): ControlMeasureStyle {
+  const style: ControlMeasureStyle = { ...toRaw(props.item.style ?? {}) };
+  style.opacity = opacity;
+  return style;
+}
+
+function updateOpacity(opacity: number, undoable: boolean) {
+  if (!showRestrictivenessItem.value) return;
+  geo.updateTacticalGraphic(
+    props.item.id,
+    { style: nextStyle(opacity) },
+    { undoable },
+  );
+}
+
+function commitOpacity() {
+  updateOpacity(opacityValue.value, true);
+}
 
 function isActive(stateEntry: ScenarioLayerItemState, index: number) {
   if (!state.value.length) return false;
@@ -61,6 +106,28 @@ function clearState() {
     </div>
 
     <ul class="mt-2 divide-y divide-gray-200 border-t border-b border-gray-200">
+      <li
+        v-if="showRestrictivenessItem"
+        class="relative flex items-center gap-4 py-4"
+        data-test="restrictiveness-item"
+      >
+        <div class="text-foreground shrink-0 text-sm font-bold">Restrictiveness</div>
+        <div class="grid min-w-0 flex-1 grid-cols-[1fr_5ch] items-center gap-4">
+          <Slider
+            id="cm-polygon-restrictiveness"
+            v-model="opacity"
+            :min="0"
+            :max="1"
+            :step="0.01"
+            class="min-w-20"
+            aria-label="Polygon restrictiveness"
+            @value-commit="commitOpacity"
+          />
+          <span class="text-foreground text-sm font-bold tabular-nums">
+            {{ opacityAsPercent }}%
+          </span>
+        </div>
+      </li>
       <li
         v-for="(stateEntry, index) in state"
         :key="stateEntry.id"

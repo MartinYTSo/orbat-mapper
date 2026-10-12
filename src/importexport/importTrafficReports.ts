@@ -1,9 +1,29 @@
 import dayjs from "dayjs";
 import type { Position } from "geojson";
 
+import { DEFAULT_TRAFFIC_REPORTS_IMPORT_OPTIONS } from "@/importexport/trafficReportsImportOptions";
 import { SID } from "@/symbology/values";
 import type { TScenario } from "@/scenariostore";
 import type { NGeometryLayerItem, NUnitAdd } from "@/types/internalModels";
+
+const MS_PER_MINUTE = 60_000;
+
+export interface ImportTrafficReportsOptions {
+  /** How long a report stays on the map when the payload omits visibleUntilT. */
+  visibilityMinutes?: number;
+}
+
+function resolveVisibleUntilT(
+  visibleFromT: string,
+  explicitUntilT: string | undefined,
+  visibilityMinutes: number,
+): string | undefined {
+  if (explicitUntilT) return explicitUntilT;
+  if (visibilityMinutes <= 0) return undefined;
+  return new Date(
+    Date.parse(visibleFromT) + visibilityMinutes * MS_PER_MINUTE,
+  ).toISOString();
+}
 
 export const TRAFFIC_REPORTS_SIDE_ID = "trafficReportsSide";
 export const TRAFFIC_REPORTS_GROUP_ID = "trafficReportsGroup";
@@ -58,7 +78,11 @@ export async function fetchTrafficReportsPayload(
 export function importTrafficReports(
   scenario: TScenario,
   payload: TrafficReportsPayload,
+  options: ImportTrafficReportsOptions = {},
 ): { importedFeatures: number; importedUnits: number; center?: Position } {
+  const visibilityMinutes =
+    options.visibilityMinutes ??
+    DEFAULT_TRAFFIC_REPORTS_IMPORT_OPTIONS.visibilityMinutes;
   const { store, unitActions, geo, time } = scenario;
 
   if (payload.startTime) {
@@ -90,6 +114,11 @@ export function importTrafficReports(
     if (!layer) return;
 
     for (const feature of payload.features) {
+      const visibleUntilT = resolveVisibleUntilT(
+        feature.visibleFromT,
+        feature.visibleUntilT,
+        visibilityMinutes,
+      );
       const item: NGeometryLayerItem = {
         id: feature.id,
         kind: "geometry",
@@ -98,9 +127,7 @@ export function importTrafficReports(
         geometry: feature.geometry,
         geometryMeta: { geometryKind: "Point" },
         visibleFromT: +dayjs(feature.visibleFromT),
-        ...(feature.visibleUntilT
-          ? { visibleUntilT: +dayjs(feature.visibleUntilT) }
-          : {}),
+        ...(visibleUntilT ? { visibleUntilT: +dayjs(visibleUntilT) } : {}),
         style: {
           "marker-color": "#EAB308",
           "marker-symbol": "circle",
@@ -127,7 +154,7 @@ export function importTrafficReports(
       sideId,
       {
         id: TRAFFIC_REPORTS_GROUP_ID,
-        name: "ITDX Traffic Reports",
+        name: "Traffic Reports",
         _isNew: false,
       },
       { newId: false },
@@ -135,9 +162,13 @@ export function importTrafficReports(
     if (!groupId) return;
 
     for (const unit of payload.units) {
-      // Deliberately no `location`: an initial position projects from the beginning of
-      // time, which would put every report on the map at once regardless of the clock.
-      // The position only exists as timed state, so a report appears when it is reported.
+      // Deliberately no `location`: an initial position projected from the beginning of
+      // time would put every report on the map at once regardless of the clock.
+      const visibleUntilT = resolveVisibleUntilT(
+        unit.visibleFromT,
+        unit.visibleUntilT,
+        visibilityMinutes,
+      );
       const state: NUnitAdd["state"] = [
         {
           id: `${unit.id}-t0`,
@@ -145,10 +176,10 @@ export function importTrafficReports(
           location: unit.location,
         },
       ];
-      if (unit.visibleUntilT) {
+      if (visibleUntilT) {
         state.push({
           id: `${unit.id}-t1`,
-          t: +dayjs(unit.visibleUntilT),
+          t: +dayjs(visibleUntilT),
           location: null,
         });
       }

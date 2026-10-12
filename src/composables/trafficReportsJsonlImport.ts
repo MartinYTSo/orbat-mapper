@@ -22,12 +22,14 @@ export async function importTrafficReportsJsonlFile(
   try {
     const options = trafficReportsImportOptions.value;
     const payload = trafficReportsJsonlToPayload(await file.text(), options);
-    const result = importTrafficReports(scenario, payload);
+    const result = importTrafficReports(scenario, payload, {
+      visibilityMinutes: options.visibilityMinutes,
+    });
     if (result.center) geoStore.panToLocation(result.center, 1200);
     const window =
       options.visibilityMinutes > 0
         ? `each visible for ${options.visibilityMinutes} min`
-        : "each visible once reported";
+        : "each stays on the map after it appears";
     notify({
       type: "success",
       message: `Imported ${result.importedUnits} traffic reports (${options.targetYear}, ${window}).`,

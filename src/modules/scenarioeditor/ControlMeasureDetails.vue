@@ -85,17 +85,6 @@ const { clear: clearSelection } = useSelectedItems();
 const uiStore = useUiStore();
 const { controlMeasureDetailsTab: selectedTab } = storeToRefs(useTabStore());
 
-const tabList = computed(() => {
-  const tabs = [
-    { label: "Style", value: "0" },
-    { label: "Amplifiers", value: "2" },
-    { label: "Details", value: "3" },
-    { label: "State", value: "4" },
-  ];
-  if (uiStore.debugMode) tabs.push({ label: "Debug", value: "5" });
-  return tabs;
-});
-
 const selectedTabString = computed({
   get: () => selectedTab.value.toString(),
   set: (value: string) => {
@@ -115,6 +104,17 @@ const item = computed<NTacticalGraphicLayerItem | null>(() => {
   if (props.selectedIds.size !== 1) return null;
   const { layerItem } = geo.getLayerItemById(props.selectedIds.values().next().value!);
   return layerItem && isNTacticalGraphicLayerItem(layerItem) ? layerItem : null;
+});
+
+const tabList = computed(() => {
+  const tabs = [
+    { label: "Style", value: "0" },
+    { label: "Amplifiers", value: "2" },
+    { label: "Details", value: "3" },
+    { label: "State", value: "4" },
+  ];
+  if (uiStore.debugMode) tabs.push({ label: "Debug", value: "5" });
+  return tabs;
 });
 
 const isMultiMode = computed(() => props.selectedIds.size > 1);

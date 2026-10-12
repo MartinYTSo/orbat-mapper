@@ -52,17 +52,37 @@ Make a standalone build, that is one HTML file that runs from your disk without 
 
 For the different deployment options, see https://vitejs.dev/guide/static-deploy.html.
 
-## Shared traffic with ITDX-2026
+## Shared traffic with A-GAME
 
-ORBAT Mapper and the [Watchtower MLCOA demo](https://github.com/Panoptica-Technologies/ITDX-2026)
-(ITDX-2026) share one synthetic intelligence traffic file:
+ORBAT Mapper and the [Watchtower MLCOA demo](https://github.com/MartinYTSo/A-GAME)
+(A-GAME, formerly ITDX-2026) share one synthetic intelligence traffic stream.
+The source of truth is `scenario/traffic.jsonl` in A-GAME. Running `make traffic`
+there converts it into this repository's payload:
 
 `public/traffic_reports_payload.json`
 
-It contains 100 map features (HUMINT, UAS, CONTACT, and related formats) for
+It contains 500 map features (HUMINT, UAS, CONTACT, and related formats) for
 OPERATION BULLDOG. Each feature stores report text in `description` and structured
 fields (`timestamp_utc`, `report_type`, `equipment`, `mgrs`, and so on) in
 `userData`.
+
+Clone A-GAME next to this repository:
+
+```text
+Repo/
+├── A-GAME/
+└── martin-orbat-mapper/
+```
+
+To regenerate the payload after changing the traffic, run this from A-GAME (it
+also re-seeds A-GAME's SQLite store):
+
+```console
+cd ../A-GAME
+make traffic
+```
+
+Then re-import the payload into your scenario.
 
 ### Import into a scenario
 
@@ -72,69 +92,62 @@ After `pnpm run dev`, either:
 - Use the scenario editor traffic-reports layer to import a JSONL file (converted to
   the same payload shape in-app).
 
-Reports appear on the map as point features on the traffic reports layer.
-
-### Match the Streamlit demo
-
-Clone ITDX-2026 next to this repository:
-
-```text
-Repo/
-├── ITDX-2026/
-└── martin-orbat-mapper/
-```
-
-ITDX Streamlit reads the same payload via `scenario/script.yaml`:
-
-```yaml
-traffic:
-  enabled: true
-  path: ../martin-orbat-mapper/public/traffic_reports_payload.json
-```
-
-Run the operator UI from the ITDX repo:
-
-```console
-cd ../ITDX-2026
-uv sync --extra dev
-make ui
-```
-
-Both applications then parse identical report text and timestamps through their
-respective loaders (`scenario/traffic_loader.py` in ITDX, `importTrafficReports.ts`
-here).
+Reports appear on the map as point features on the traffic reports layer. The
+import is saved with the scenario in the browser, so you only need to do it once
+per scenario.
 
 ### COA generation
 
-Start the ITDX COA API first (in the sibling `ITDX-2026` repo), then open
-**COA generation** in the scenario editor. On Reset, ORBAT syncs traffic from
-the map layer into ITDX SQLite and starts an hourly MLCOA run. Vite proxies
-`/api/coa` to port 8765 during development.
+Start the A-GAME COA API first, then open **COA generation** in the scenario
+editor. Vite proxies `/api/coa` to `127.0.0.1:8765` during development
+(`vite.config.ts`), so the connection only works under `pnpm run dev`; set
+`VITE_COA_API_BASE` for other setups.
+
+On Reset, ORBAT sends the reports from the Traffic Reports layer to the API,
+starts an hourly MLCOA run, and syncs the full set into A-GAME's SQLite store
+under this scenario's id. ORBAT does not read the data seeded by A-GAME's
+`make traffic`; it always supplies its own map traffic.
+
+The A-GAME API refuses to start until its SQLite store holds seeded traffic. Run
+`make traffic` once before starting it, or set `ITDX_ALLOW_EMPTY_TRAFFIC=1` to
+start empty and let ORBAT's Reset fill it.
 
 **Local (no Docker):**
 
 ```console
-cd ../ITDX-2026
+cd ../A-GAME
 uv sync --extra api
+make traffic
 uv run uvicorn engine.api:app --port 8765
 ```
 
 **Docker:**
 
 ```console
-cd ../ITDX-2026
-docker compose up --build -d
+cd ../A-GAME
+docker compose build
+docker compose run --rm coa-api uv run python -m scenario.seed_traffic_db --wipe
+docker compose up -d
 ```
 
-After you patch ITDX API code, rebuild and recreate the container (a plain
+The seed step is needed once per Docker volume, because the image does not
+include `data/traffic.db`.
+
+Check that the API is up and loaded:
+
+```console
+curl http://127.0.0.1:8765/health
+```
+
+After you patch A-GAME API code, rebuild and recreate the container (a plain
 `restart` keeps the old image):
 
 ```console
-cd ../ITDX-2026
+cd ../A-GAME
 docker compose up --build -d
 ```
 
-See the ITDX README for logs, health checks, and stopping the stack.
+See the A-GAME README for logs, health checks, and stopping the stack.
 
 ## Use ORBAT Mapper without an internet connection
 

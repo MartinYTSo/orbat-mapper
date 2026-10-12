@@ -10,8 +10,10 @@ import { type MeasurementUnit } from "@/geo/measurementTypes";
 import NumberInputGroup from "@/components/NumberInputGroup.vue";
 import SimpleDivider from "@/components/SimpleDivider.vue";
 import PanelSubHeading from "@/components/PanelSubHeading.vue";
+import { useReferenceGridStore } from "@/stores/referenceGridStore";
 
 const settings = useMapSettingsStore();
+const referenceGrid = useReferenceGridStore();
 const measurementStore = useMeasurementsStore();
 const uiSettings = useUiStore();
 
@@ -36,6 +38,7 @@ const measurementItems: RadioGroupItemData<MeasurementUnit>[] = [
       >Show ORBAT breadcrumbs</ToggleField
     >
     <ToggleField v-model="settings.showScaleLine">Show scale line</ToggleField>
+    <ToggleField v-model="referenceGrid.visible">Show grid cells</ToggleField>
     <ToggleField v-model="settings.showLocation"
       >Show location of mouse cursor
     </ToggleField>

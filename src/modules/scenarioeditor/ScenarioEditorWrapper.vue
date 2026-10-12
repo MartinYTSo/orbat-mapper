@@ -14,6 +14,7 @@ import {
   fetchTrafficReportsPayload,
   importTrafficReports,
 } from "@/importexport/importTrafficReports";
+import { trafficReportsImportOptions } from "@/importexport/trafficReportsImportOptions";
 import { useGeoStore } from "@/stores/geoStore";
 import { useNotifications } from "@/composables/notifications";
 import { useRoute, useRouter } from "vue-router";
@@ -106,7 +107,9 @@ async function maybeImportTrafficReports() {
   trafficImportStarted.value = true;
   try {
     const payload = await fetchTrafficReportsPayload();
-    const result = importTrafficReports(scenario.value, payload);
+    const result = importTrafficReports(scenario.value, payload, {
+      visibilityMinutes: trafficReportsImportOptions.value.visibilityMinutes,
+    });
     if (result.center) {
       geoStore.panToLocation(result.center, 1200);
     }
